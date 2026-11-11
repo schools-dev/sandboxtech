@@ -1,0 +1,266 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>Bench: ESP32 Sandbox</title><style>
+:root{--bg:#0d1512;--grid:#1a2a22;--pan:#16221c;--ink:#e8f1ea;--mut:#8aa393;--acc:#35d39a;--bad:#ff6b5a;--ln:#2a3d33;color-scheme:dark;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media(prefers-color-scheme:light){:root{--bg:#eef3ee;--grid:#d5e0d7;--pan:#fff;--ink:#14231b;--mut:#51675a;--acc:#0b8a5e;--bad:#c0392b;--ln:#c4d3c8;color-scheme:light}}
+html,body{height:100%;margin:0;background:var(--bg);color:var(--ink);font:14px "Avenir Next","Trebuchet MS",system-ui,sans-serif;overflow:hidden}
+#app{height:100%;display:flex;flex-direction:column}
+header{display:flex;gap:4px;align-items:center;padding:4px 8px;background:var(--pan);border-bottom:1px solid var(--ln)}
+header b{flex:1;font-size:15px}
+button{min-height:44px;min-width:44px;border:1px solid var(--ln);background:var(--pan);color:var(--ink);border-radius:8px;font:inherit;padding:0 10px}
+button.on,button:active{background:var(--acc);color:#04130c}
+#c{flex:1;min-height:0;width:100%;touch-action:none;display:block}
+#tut,#toast{position:absolute;left:8px;right:8px;padding:8px 10px;border-radius:8px;background:var(--pan);border:1px solid var(--acc);display:none}
+#tut{top:calc(56px + env(safe-area-inset-top,0px));display:flex;gap:8px;align-items:center}#tut span{flex:1}
+#toast{bottom:270px;text-align:center;border-color:var(--ln);pointer-events:none}
+#dock{height:250px;background:var(--pan);border-top:1px solid var(--ln);display:flex;flex-direction:column}
+#tabs{display:flex;overflow-x:auto}#tabs button{flex:1;border-radius:0;border:0;border-bottom:2px solid transparent;white-space:nowrap}
+#tabs button.on{background:none;color:var(--acc);border-bottom-color:var(--acc)}
+#pnl{flex:1;overflow:auto;padding:8px;display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px;align-content:start}
+.card{border:1px solid var(--ln);border-radius:8px;padding:8px;text-align:left;min-height:64px}.card small{display:block;color:var(--mut)}
+.wide{grid-column:1/-1}input{min-height:40px;padding:0 8px;border-radius:8px;border:1px solid var(--ln);background:var(--bg);color:var(--ink);font:inherit}
+header{background:linear-gradient(180deg,var(--pan),var(--bg));box-shadow:0 2px 14px #0007}header b{font-size:18px;letter-spacing:.6px;background:linear-gradient(90deg,var(--acc),#ffd34a);-webkit-background-clip:text;background-clip:text;color:transparent}button{transition:transform .1s,background .15s}button:active{transform:scale(.95)}#dock{background:color-mix(in srgb,var(--pan) 94%,transparent);backdrop-filter:blur(12px);border-radius:16px 16px 0 0;box-shadow:0 -6px 24px #0007}.card{background:linear-gradient(160deg,var(--pan),var(--bg));border-left:3px solid var(--acc);border-radius:10px}.card b{display:block;margin-bottom:2px}.card.on small{color:#04130c}#tut{background:linear-gradient(90deg,color-mix(in srgb,var(--acc) 28%,var(--pan)),var(--pan));box-shadow:0 4px 22px #35d39a44;font-size:13px}details{margin-top:4px}summary{min-height:32px;display:flex;align-items:center;font-weight:600}select{min-height:40px;border-radius:8px;border:1px solid var(--ln);background:var(--bg);color:var(--ink);font:inherit}dialog{background:var(--pan);color:var(--ink);border:1px solid var(--ln);border-radius:12px;max-width:420px}
+</style></head><body><div id="app"><header><b>Bench</b><button id="pw" title="Master power">⏻</button><button onclick="undo()">↶</button><button onclick="redo()">↷</button><button onclick="fit()">⤢</button><button onclick="menu()">☰</button></header>
+<canvas id="c"></canvas><div id="tut"><span id="tt"></span><button onclick="S.les=null">Hide</button></div><div id="toast"></div>
+<section id="dock"><nav id="tabs"></nav><div id="pnl"></div></section></div><dialog id="dlg"></dialog>
+<script>
+const $=s=>document.querySelector(s),cv=$('#c'),cx=cv.getContext('2d'),dpr=Math.min(devicePixelRatio||1,3);
+const CAT={esp32:{n:'ESP32 DevKit V1',g:'Boards',w:76,h:190,d:'Needs a screen wired to show anything'},
+cardputer:{n:'M5 Cardputer',g:'Boards',w:150,h:92,scr:[12,10,126,50],d:'Built-in screen and keyboard'},
+tembed:{n:'T-Embed CC1101',g:'Boards',w:130,h:130,scr:[12,12,106,62],d:'Screen, encoder, sub-GHz radio'},
+oled:{n:'SSD1306 OLED',g:'Screens',w:100,h:76,d:'128x64 I2C display'},
+tv:{tvk:1,n:'Flatscreen TV',g:'Targets',w:190,h:122,scr:[8,8,174,88],d:'Reacts to IR power codes'},
+iph:{n:'iPhone-style',g:'Targets',w:74,h:140,scr:[6,14,62,112],d:'Reacts to BLE spam'},
+sam:{n:'Samsung-style',g:'Targets',w:74,h:140,scr:[6,12,62,114],d:'Reacts to BLE spam'},
+tag:{n:'Price tag',g:'Targets',w:100,h:66,d:'Unique barcode for Tag Tinker'}};
+const BR=['esp32','cardputer','tembed','s3','c3','node','pico','cam','stick','tds3','flip','uno','nano'],PB=['esp32','s3','c3','node','pico'],ESB=['esp32','s3','c3','cardputer','stick','tds3','tembed'],PT=['iph','sam','spk','lap','tab'],I2=['GND','VCC','SCL','SDA'],NP=['GND','5V','DIN'],isD=p=>CAT[p.t].dsp||p.t=='oled';
+const A=(k,n,g,w,h,c,o={})=>CAT[k]={n,g,w,h,c,d:'',...o};
+A('s3','ESP32-S3 DevKitC-1','Boards',76,190,'#102a52',{d:'Dual USB-C, RGB LED'});A('c3','ESP32-C3 DevKit','Boards',76,190,'#3a1a52',{d:'RISC-V, USB-C'});A('node','ESP8266 NodeMCU','Boards',76,190,'#1c1c1c',{d:'Rejects ESP32-only firmware'});A('pico','Raspberry Pi Pico W','Boards',76,190,'#0a5a2a',{d:'RP2040, Blink only'});
+A('cam','ESP32-CAM','Boards',100,80,'#222',{d:'No USB: needs an FTDI adapter to flash'});A('stick','M5StickC Plus2','Boards',70,110,'#e8742a',{scr:[8,10,54,36],d:'Screen, 3 buttons, IR'});A('tds3','LilyGO T-Display S3','Boards',90,70,'#222',{scr:[8,8,74,38],d:'Screen, two buttons'});A('flip','Flipper Zero','Boards',90,160,'#ff8c1a',{scr:[12,14,66,38],d:'Own Flipper UI, works as a tool'});A('uno','Arduino Uno','Boards',150,100,'#0a6e8a',{d:'Classic board, Blink only'});A('nano','Arduino Nano','Boards',100,50,'#0a6e8a',{d:'Small classic, Blink only'});
+A('sh1106','SH1106 1.3" OLED','Screens',100,76,'#1b3a6a',{dsp:1,pn:I2,d:'Wire like the SSD1306'});A('tft','ST7789 TFT','Screens',110,86,'#5a1a1a',{dsp:1,pn:I2,d:'Color TFT (4-wire here)'});A('ili','ILI9341 TFT + touch','Screens',130,100,'#6a2a1a',{dsp:1,pn:I2,d:'2.8" color TFT'});A('lcd','LCD 16x2','Screens',130,70,'#0b6a4a',{dsp:1,pn:I2,d:'Character LCD with I2C backpack'});A('epaper','E-paper 2.13"','Screens',110,90,'#556',{dsp:1,pn:I2,d:'Slow, low-power display'});A('tm','TM1637 7-segment','Screens',100,60,'#7a1a1a',{dsp:1,pn:I2,d:'4-digit display'});
+A('neo','NeoPixel strip','Screens',110,50,'#222',{k:'neo',pn:NP,d:'Wire GND, 5V, DIN to a running board'});A('mat','NeoPixel 8x8 matrix','Screens',110,100,'#222',{k:'neo',mx:1,pn:NP,d:'Wire GND, 5V, DIN to a running board'});
+A('btn','Programmable button','Components',60,70,'#2d3b4a',{bt:1,pn:['GND','S1'],d:'Tap it on the bench. Pick its job in Inspector'});A('pad','5-way button pad','Components',150,80,'#2d3b4a',{bt:5,pn:['GND','S1','S2','S3','S4','S5'],d:'Up, Down, Left, Right, Select, all reassignable'});
+A('led','LED','Components',50,70,'#3a3a3a',{k:'led',pn:['+','-'],d:'Lights when wired to a running board'});A('sw','Toggle switch','Components',90,56,'#3a3a3a',{k:'sw',d:'Tap to flip'});A('pot','Potentiometer','Components',70,70,'#2a4a8a',{k:'pot',d:'Tap to turn'});A('enc','Rotary encoder','Components',70,60,'#3a3a3a');A('res','Resistor','Components',80,40,'#9a7a4a');A('buz','Buzzer','Components',60,60,'#222',{k:'buz',d:'Tap to beep'});A('relay','Relay module','Components',90,70,'#1a4a8a');A('servo','Servo motor','Components',80,70,'#2255cc',{k:'servo',d:'Sweeps while a board runs'});A('motor','DC motor','Components',80,70,'#777',{k:'motor',d:'Spins while a board runs'});A('step','Stepper + A4988 driver','Components',100,70,'#8a1a1a');A('bb','Breadboard','Components',240,90,'#8a8a7a');A('sold','Soldering iron','Components',120,40,'#c33',{k:'sold',d:'Tap it'});A('shr','Heat-shrink','Components',80,30,'#444');
+A('dht','DHT22 temp/humidity','Sensors',90,70,'#3b6ea8',{rd:'t'});A('pir','PIR motion','Sensors',90,70,'#5a6a7a',{rd:'m'});A('sr04','HC-SR04 ultrasonic','Sensors',110,60,'#1a6ea8',{rd:'d'});A('ldr','LDR light sensor','Sensors',90,60,'#6a4a2a',{rd:'l'});A('rc','RC522 NFC/RFID','Sensors',100,70,'#1a5aa8',{rd:'n'});A('gps','GPS module','Sensors',100,70,'#333',{rd:'g'});A('imu','MPU6050 accel/gyro','Sensors',100,60,'#4a2a8a',{rd:'a'});A('mic','INMP441 microphone','Sensors',100,60,'#2a6a4a',{rd:'v'});A('irr','IR receiver','Sensors',70,60,'#333');A('irt','IR transmitter','Sensors',70,60,'#333');
+A('cc','CC1101 sub-GHz','RF',100,60,'#1a4a8a');A('nrf','NRF24L01','RF',90,60,'#5a1a8a');A('lora','SX1276 LoRa','RF',100,60,'#8a4a1a');A('rf','433 MHz TX/RX','RF',100,60,'#2a2a2a');A('ant1','Rubber-duck antenna','RF',30,90,'#222',{ant:1,d:'Boosts attack range of boards nearby'});A('ant2','Directional antenna','RF',90,40,'#555',{ant:1,d:'Boosts attack range of boards nearby'});A('ant3','PCB trace antenna','RF',70,40,'#0c5f3e');
+A('b18','18650 + holder','Power',100,40,'#2a2a2a',{rd:'b'});A('lipo','LiPo + JST','Power',90,50,'#3a5a9a',{rd:'b'});A('chg','Charger module','Power',80,60,'#1a8a3a');A('bank','USB power bank','Power',100,60,'#444',{rd:'b'});
+A('usbc','USB-C cable','Cables',140,24,'#666');A('usbm','Micro-USB cable','Cables',140,24,'#555');A('usba','USB-A to C cable','Cables',140,24,'#777');A('hub','USB hub','Cables',100,50,'#666');A('ftdi','FTDI / CP2102 adapter','Cables',100,50,'#1a5a8a',{d:'Lets the ESP32-CAM be flashed'});A('jmp','Jumper wires','Cables',100,30,'#a33');
+A('tvs','Mini TV','Targets',130,92,'#111',{tvk:1,scr:[6,6,118,62],d:'Reacts to IR power codes'});A('tvl','Big TV','Targets',250,160,'#111',{tvk:1,scr:[10,10,230,118],d:'Reacts to IR power codes'});A('spk','Bluetooth speaker','Targets',70,90,'#2a2a2a',{scr:[8,50,54,32],pop:1,d:'Pairing popups on BLE spam'});A('lap','Laptop','Targets',200,130,'#222',{scr:[14,10,172,100],pop:1,d:'Popups on BLE spam, Wi-Fi drops on deauth'});A('tab','Tablet','Targets',140,100,'#222',{scr:[8,8,124,84],pop:1,d:'Popups on BLE spam, Wi-Fi drops on deauth'});
+A('plug','Smart plug','Smart home',50,60,'#556',{d:'Flickers under BLE spam'});A('bulb','Smart bulb','Smart home',50,70,'#665',{d:'Flickers under BLE spam'});A('bell','Smart doorbell/camera','Smart home',60,70,'#334',{d:'Flickers under BLE spam'});
+A('reg','Cash register','Props',110,80,'#555',{d:'Set dressing'});A('cart','Shopping cart','Props',100,70,'#667',{d:'Set dressing'});A('shelf','Shelf','Props',160,60,'#7a5a3a',{d:'Set dressing'});
+const FW={bruce:{n:'Bruce',ok:ESB,kb:1480,d:'Menu: IR, BLE, Wi-Fi, Sub-GHz'},
+furi:{n:'Furi-style (Flipper-like)',ok:['tembed'],kb:1210,d:'Sub-GHz, NFC, IR, GPIO'},
+blink:{n:'Blink',ok:BR,kb:260,d:'Blinks the GPIO2 LED'},
+wifi:{n:'Wi-Fi scanner',ok:BR.filter(x=>!['uno','nano','pico'].includes(x)),kb:540,d:'Lists fake nearby networks'},marauder:{n:'Marauder-style Wi-Fi tools',ok:ESB,kb:900,d:'Scan, deauth demo, sniff menu'},flip:{n:'Stock Flipper UI',ok:['flip'],kb:800,d:'Flipper-style menus'},clock:{n:'OLED clock',ok:BR,kb:180,d:'Shows the time on any screen'}};
+const MENU={bruce:['TV-B-Gone','BLE Spam','Deauth demo','Sub-GHz','NFC','Apps'],furi:['Sub-GHz','NFC','Infrared (TV-B-Gone)','GPIO'],marauder:['Scan APs','Deauth demo','Sniff','Beacon list'],flip:['Sub-GHz','NFC','Infrared (TV-B-Gone)','RFID','GPIO']};
+const ACT={'TV-B-Gone':'ir','BLE Spam':'ble','Deauth demo':'deauth','Infrared (TV-B-Gone)':'ir'};
+const POP={iph:['AirPods Pro nearby: Connect','Apple TV Setup','Beats Fit Pro: Pair'],sam:['Galaxy Buds Live: Pair','Quick Share request','Galaxy Watch: Connect'],spk:['Pair request 1','Pair request 2','Pair request 3'],lap:['Nearby device: Connect','Bluetooth pairing request','Swift Pair: new device'],tab:['Nearby share request','Pair with Buds?','Device wants to connect']};
+let S={parts:[],wires:[],sel:null,nid:1,ach:{},skip:0,mute:0,recent:[],done:{},pg:{},les:0},V={x:40,y:40,z:.9},hist=[],fut=[],now=0,fx=[],tab='Learn',T={};
+const isB=p=>p&&BR.includes(p.t),byId=id=>S.parts.find(p=>p.id==id),K=n=>n=='5V'?'5v':n=='3V3'?'3v3':n=='GND'?'gnd':n=='VCC'?'vcc':'io';
+function pinsOf(p){if(PB.includes(p.t)){const L=['3V3','GND','EN','2','4','21'],R=['5V','GND','22','TX','RX','23'];return[...L.map((n,i)=>({n,x:7,y:44+i*22,s:'r'})),...R.map((n,i)=>({n,x:69,y:44+i*22,s:'l'}))]}
+if(p.t=='oled')return['GND','VCC','SCL','SDA'].map((n,i)=>({n,x:16+i*23,y:68,s:'u'}));const pn=CAT[p.t].pn;return pn?pn.map((n,i)=>({n,x:14+i*23,y:CAT[p.t].h-8,s:'u'})):[]}
+const wp=p=>pinsOf(p).map((q,i)=>({...q,i,p,x:p.x+q.x,y:p.y+q.y}));
+const pinXY=a=>{const p=byId(a[0]);return p&&wp(p)[a[1]]};
+let ac;function beep(f=600,d=.08,t='square'){if(S.mute)return;try{ac=ac||new AudioContext();const o=ac.createOscillator(),g=ac.createGain();o.type=t;o.frequency.value=f;g.gain.value=.05;o.connect(g);g.connect(ac.destination);o.start();o.stop(ac.currentTime+d)}catch(e){}navigator.vibrate&&navigator.vibrate(8)}
+let tt;function toast(m){const e=$('#toast');e.textContent=m;e.style.display='block';clearTimeout(tt);tt=setTimeout(()=>e.style.display='none',2200)}
+function ach(k){if(!S.ach[k]){S.ach[k]=1;toast('Achievement: '+k);beep(900,.2,'triangle')}}
+const snapJ=()=>JSON.stringify({parts:S.parts,wires:S.wires,nid:S.nid});
+function snap(){hist.push(snapJ());if(hist.length>50)hist.shift();fut=[]}
+function rest(j){const o=JSON.parse(j);S.parts=o.parts;S.wires=o.wires;S.nid=o.nid;S.parts.forEach(p=>{if(p.st=='boot')p.bt=now});sel(null)}
+function undo(){if(hist.length){fut.push(snapJ());rest(hist.pop())}}function redo(){if(fut.length){hist.push(snapJ());rest(fut.pop())}}
+function toW(x,y){return{x:(x-V.x)/V.z,y:(y-V.y)/V.z}}
+function spawn(t){snap();const c=CAT[t],m=toW(cv.clientWidth/2,cv.clientHeight/2),k=S.parts.length%6*16,p={id:S.nid++,t,x:Math.round(m.x-c.w/2+k),y:Math.round(m.y-c.h/2+k)};
+if(isB(p)){p.on=0;p.st='off';p.fw=null;p.m=0}if(t=='tag')p.code='TAG-'+String(Math.floor(Math.random()*1e6)).padStart(6,'0');
+if(c.pop){p.pop=[];p.wifi=3}if(c.tvk)p.tv=1;if(c.bt)p.fns=c.bt==5?['Up','Down','Left','Right','Select']:['Select'];if(t=='flip')p.fw='flip';S.parts.push(p);S.sel=p.id;if(tab!='Parts'&&tab!='Targets')ui();beep(520,.05)}
+function sel(id){S.sel=id;if(id&&tab=='Parts'||id&&tab=='Targets')tab='Inspector';ui()}
+function pow(p,v){p.on=v;p.st=v?'boot':'off';p.bt=now+1200;if(!v)setAtk(p,null);beep(v?700:300,.15)}
+$('#pw').onclick=()=>{const v=!S.parts.some(p=>isB(p)&&p.on);S.parts.filter(isB).forEach(p=>pow(p,v));ui()};
+function inRange(p,ts){const c=CAT[p.t];return S.parts.filter(q=>ts.includes(q.t)&&Math.hypot(q.x+CAT[q.t].w/2-p.x-c.w/2,q.y+CAT[q.t].h/2-p.y-c.h/2)<rng(p))}
+function setAtk(p,a){const o=p.atk;p.atk=a;if(o=='ble')S.parts.forEach(q=>q.pop&&(q.pop=[]));if(o=='deauth')S.parts.forEach(q=>q.wifi!=null&&(q.wifi=3));
+if(a){p.a0=now;ach('First attack');beep(200,.25,'sawtooth');if(a=='ir'){p.irEnd=now+1800;inRange(p,['tv','tvs','tvl']).forEach(q=>q.tv=!q.tv)}}}
+function menuPick(i,b){const p=b||byId(S.sel),n=MENU[p.fw][i];p.m=i;const a=ACT[n];if(a)setAtk(p,p.atk==a?null:a);else toast(n+': simulated, nothing to attack here');ui()}
+function flashFw(k){const p=byId(S.sel);if(!isB(p))return toast('Select a board first');if(!FW[k].ok.includes(p.t))return toast(FW[k].n+' does not fit '+CAT[p.t].n);if(p.t=='cam'&&!S.parts.some(q=>q.t=='ftdi'))return toast('ESP32-CAM has no USB port. Add an FTDI adapter from Parts.');
+setAtk(p,null);p.fl={fw:k,t0:now,ms:2600,pr:0};beep(500,.1)}
+function oledSt(o){const c={};S.wires.forEach(w=>{const a=w.a[0]==o.id?w.a:w.b[0]==o.id?w.b:0;if(a){const b=a==w.a?w.b:w.a;c[pinsOf(o)[a[1]].n]=[byId(b[0]),pinsOf(byId(b[0]))[b[1]].n]}});
+if(o.fried||Object.keys(c).length<4)return{st:'none'};const b=c.GND[0],ok=c.GND[1]=='GND'&&c.VCC[1]=='3V3'&&c.SDA[1]=='21'&&c.SCL[1]=='22'&&Object.values(c).every(v=>v[0]==b);return ok?{st:'ok',b}:{st:'bad'}}
+function connect(a,b){if(a[0]==b[0])return;if(S.wires.some(w=>JSON.stringify([w.a,w.b])==JSON.stringify([a,b])||JSON.stringify([w.a,w.b])==JSON.stringify([b,a])))return;snap();S.wires.push({a,b,c:S.wires.length%5});beep(880,.06);
+const ka=K(pinsOf(byId(a[0]))[a[1]].n),kb=K(pinsOf(byId(b[0]))[b[1]].n);
+if(ka=='5v'&&kb=='vcc'||ka=='vcc'&&kb=='5v'){const o=byId(ka=='vcc'?a[0]:b[0]);o.fried=1;ach('First fried board');toast('5V on a 3.3V pin fried the OLED. Use Repair.');beep(120,.4,'sawtooth')}
+if(S.parts.some(p=>isD(p)&&oledSt(p).st=='ok'))ach('First full build');ui()}
+/* ---------- input ---------- */
+const P=new Map();let drag=null,wire=null,pin0=null;
+function pinAt(x,y){for(const p of[...S.parts].reverse())for(const q of wp(p))if(Math.hypot(q.x-x,q.y-y)<15/Math.max(V.z,.7))return q}
+function partAt(x,y){return[...S.parts].reverse().find(p=>x>=p.x&&y>=p.y&&x<=p.x+CAT[p.t].w&&y<=p.y+CAT[p.t].h)}
+cv.onpointerdown=e=>{cv.setPointerCapture(e.pointerId);P.set(e.pointerId,{x:e.offsetX,y:e.offsetY});
+if(P.size==2){drag=wire=null;const[a,b]=[...P.values()];pin0={d:Math.hypot(a.x-b.x,a.y-b.y),x:(a.x+b.x)/2,y:(a.y+b.y)/2};return}
+const w=toW(e.offsetX,e.offsetY),h=pinAt(w.x,w.y);if(h){wire={f:h,x:w.x,y:w.y};return}
+const p=partAt(w.x,w.y);if(p){snap();S.parts.push(S.parts.splice(S.parts.indexOf(p),1)[0]);sel(p.id);drag={p,dx:w.x-p.x,dy:w.y-p.y}}else{sel(null);drag={pan:1,x:e.offsetX,y:e.offsetY}}};
+cv.onpointermove=e=>{if(!P.has(e.pointerId))return;P.set(e.pointerId,{x:e.offsetX,y:e.offsetY});
+if(P.size==2&&pin0){const[a,b]=[...P.values()],d=Math.hypot(a.x-b.x,a.y-b.y),mx=(a.x+b.x)/2,my=(a.y+b.y)/2,z=Math.min(3,Math.max(.25,V.z*d/pin0.d));
+V.x=mx-(pin0.x-V.x)*z/V.z;V.y=my-(pin0.y-V.y)*z/V.z;V.z=z;pin0={d,x:mx,y:my};return}
+const w=toW(e.offsetX,e.offsetY);if(wire){wire.x=w.x;wire.y=w.y}else if(drag&&drag.p){drag.mv=1;drag.p.x=Math.round((w.x-drag.dx)/10)*10;drag.p.y=Math.round((w.y-drag.dy)/10)*10}
+else if(drag){V.x+=e.offsetX-drag.x;V.y+=e.offsetY-drag.y;drag.x=e.offsetX;drag.y=e.offsetY}};
+cv.onpointerup=cv.onpointercancel=e=>{if(wire){const w=toW(e.offsetX,e.offsetY),t=pinAt(w.x,w.y);if(t&&t.p!=wire.f.p)connect([wire.f.p.id,wire.f.i],[t.p.id,t.i]);else beep(150,.04,'sine');wire=null}
+if(drag&&drag.p&&!drag.mv&&P.size==1)tapPart(drag.p,toW(e.offsetX,e.offsetY));P.delete(e.pointerId);if(P.size<2)pin0=null;drag=null};
+cv.addEventListener('wheel',e=>{e.preventDefault();const z=Math.min(3,Math.max(.25,V.z*(e.deltaY<0?1.1:.9)));V.x=e.offsetX-(e.offsetX-V.x)*z/V.z;V.y=e.offsetY-(e.offsetY-V.y)*z/V.z;V.z=z},{passive:false});
+function fit(){if(!S.parts.length)return;const xs=S.parts.flatMap(p=>[p.x,p.x+CAT[p.t].w]),ys=S.parts.flatMap(p=>[p.y,p.y+CAT[p.t].h]),x0=Math.min(...xs),x1=Math.max(...xs),y0=Math.min(...ys),y1=Math.max(...ys),W=cv.clientWidth,H=cv.clientHeight;
+V.z=Math.min(1.5,Math.max(.25,Math.min(W/(x1-x0+80),H/(y1-y0+80))));V.x=(W-(x1-x0)*V.z)/2-x0*V.z;V.y=(H-(y1-y0)*V.z)/2-y0*V.z}
+/* ---------- drawing ---------- */
+function R(x,y,w,h,c,r=4){cx.fillStyle=c;cx.beginPath();cx.roundRect(x,y,w,h,r);cx.fill();if(w>34&&h>34&&c[0]=='#'){const sc=cx.shadowColor;cx.shadowColor='transparent';const g=cx.createLinearGradient(x,y,x,y+h);g.addColorStop(0,'#ffffff24');g.addColorStop(.5,'#ffffff00');g.addColorStop(1,'#00000038');cx.fillStyle=g;cx.fill();cx.strokeStyle='#ffffff28';cx.lineWidth=1;cx.stroke();cx.shadowColor=sc}}
+function scr(b,x,y,w,h){cx.save();cx.beginPath();cx.rect(x,y,w,h);cx.clip();cx.fillStyle='#050805';cx.fillRect(x,y,w,h);const f=h/8.5;cx.font=f+'px ui-monospace,monospace';cx.textBaseline='top';
+if(b.st=='boot'){cx.fillStyle='#9fe';cx.fillText('booting...',x+4,y+h/2-f/2)}else if(b.st=='run'){
+if(!b.fw){cx.fillStyle='#fc6';cx.fillText('No firmware',x+4,y+4)}else{const a=b.fw=='furi'?'#ff9a1f':'#35d39a';cx.fillStyle=a;cx.fillRect(x,y,w,f+2);cx.fillStyle='#000';cx.fillText(FW[b.fw].n.split(' ')[0].toUpperCase(),x+3,y+1);
+const m=MENU[b.fw];if(m)m.forEach((s,i)=>{const yy=y+f*(i+1.3);if(i==b.m){cx.fillStyle=a;cx.fillRect(x,yy,w,f)}cx.fillStyle=i==b.m?'#000':a;cx.fillText((i==b.m?'> ':'  ')+s,x+3,yy)});
+else if(b.fw=='clock'){cx.fillStyle=a;cx.font=f*2+'px ui-monospace,monospace';cx.fillText(new Date().toTimeString().slice(0,5),x+6,y+f*2)}else if(b.fw=='blink'){cx.fillStyle=a;cx.fillText('GPIO2 '+(Math.floor(now/500)%2?'HIGH':'LOW'),x+4,y+f*2)}
+else{['HomeNet -48dBm','CafeWiFi -61dBm','FreeAP -77dBm'].forEach((s,i)=>{cx.fillStyle=a;cx.fillText(s,x+4,y+f*(i+1.6))})}
+cx.fillStyle='#8ab';cx.fillText(b.atk?'TX '+b.atk+'...':'simulated sandbox',x+3,y+h-f-1)}}cx.fillStyle='#ffffff12';cx.beginPath();cx.moveTo(x,y);cx.lineTo(x+w*.6,y);cx.lineTo(x,y+h*.8);cx.fill();cx.restore()}
+function garble(x,y,w,h){cx.save();cx.beginPath();cx.rect(x,y,w,h);cx.clip();for(let i=0;i<40;i++){cx.fillStyle=Math.random()<.5?'#fff':'#222';cx.fillRect(x+Math.random()*w,y+Math.random()*h,w/8,2)}cx.restore()}
+function phone(p,[x,y,w,h]){cx.save();cx.beginPath();cx.rect(x,y,w,h);cx.clip();const wg=cx.createLinearGradient(x,y,x,y+h);wg.addColorStop(0,p.t=='iph'?'#3a2a7a':'#0f4a3a');wg.addColorStop(1,p.t=='iph'?'#101a3a':'#071a14');cx.fillStyle=p.app=='tt'?'#f4f1ff':wg;cx.fillRect(x,y,w,h);cx.font='7px sans-serif';cx.textBaseline='top';
+if(p.app=='tt'){cx.fillStyle='#6a5acd';cx.fillRect(x,y,w,14);cx.fillStyle='#fff';cx.fillText('Tag Tinker',x+4,y+4);cx.fillStyle='#222';cx.fillText('Barcode:',x+4,y+22);cx.fillText(p.tc||'(type in Apps tab)',x+4,y+32);cx.fillStyle='#6a5acd';cx.fillText(p.tm||'',x+4,y+46)}
+else{cx.fillStyle='#fff';cx.fillText('BT '+'▂▄▆'.slice(0,p.wifi)+(p.wifi?'':' no wifi'),x+w-44,y+3);cx.font='bold 20px sans-serif';cx.fillText('12:34',x+8,y+22);cx.font='6px sans-serif';
+p.pop.slice(-4).reverse().forEach((m,i)=>{R(x+3,y+52+i*14,w-6,12,'#ffffffe6',3);cx.fillStyle='#111';cx.fillText(m,x+6,y+56+i*14)})}cx.restore()}
+function tagDraw(p){R(0,0,100,66,'#fff',4);cx.fillStyle='#ddd';cx.fillRect(4,4,92,34);const im=imc(p);
+if(im){const k=Math.min(92/im.width,34/im.height);cx.drawImage(im,4+(92-im.width*k)/2,4+(34-im.height*k)/2,im.width*k,im.height*k)}else{cx.fillStyle='#555';cx.font='bold 14px sans-serif';cx.fillText('$4.99',30,26)}
+let s=0;for(const c of p.code)s+=c.charCodeAt(0);cx.fillStyle='#000';for(let i=0,x=6;x<94;i++){s=(s*9301+49297)%233280;const w=1+s%3;cx.fillRect(x,42,w,13);x+=w+1+s%2}
+cx.font='7px ui-monospace,monospace';cx.fillStyle='#000';cx.fillText(p.code,22,57)}
+const IM={};function imc(p){if(!p.img)return null;if(!IM[p.id]||IM[p.id].s!=p.img){const i=new Image();i.src=p.img;IM[p.id]={i,s:p.img}}const i=IM[p.id].i;return i.complete?i:null}
+function part(p){const c=CAT[p.t];cx.save();cx.translate(p.x,p.y);cx.shadowColor='#000b';cx.shadowBlur=18;cx.shadowOffsetY=7;
+if(PB.includes(p.t)){R(0,0,76,190,c.c||'#0c3f2e',6);cx.shadowColor='transparent';R(14,6,48,30,'#1b1b1b',2);R(18,56,40,40,'#262626',3);cx.fillStyle='#ffffff90';cx.font='7px ui-monospace,monospace';cx.fillText(c.n.slice(0,9),12,50);cx.strokeStyle='#d9b44a';cx.lineWidth=1.5;cx.beginPath();for(let i=0;i<7;i++)cx.lineTo(18+i*7,i%2?10:28);cx.stroke();R(26,172,24,14,'#aaa',2);R(8,172,8,6,p.on&&p.st=='run'?'#3f6':'#244',1);R(60,172,8,6,p.on&&p.st=='run'&&p.fw=='blink'&&Math.floor(now/500)%2?'#4af':'#234',1)}
+else if(p.t=='cardputer'){R(0,0,150,92,'#e8742a',8);cx.shadowColor='transparent';for(let r=0;r<3;r++)for(let k=0;k<10;k++)R(10+k*13,68+r*7,10,5,'#222',1)}
+else if(p.t=='tembed'){R(0,0,130,130,'#262626',10);cx.shadowColor='transparent';cx.fillStyle='#e8742a';cx.beginPath();cx.arc(65,100,17,0,7);cx.fill();cx.fillStyle='#111';cx.beginPath();cx.arc(65,100,9,0,7);cx.fill()}
+else if(isD(p)){R(0,0,c.w,c.h,c.c||'#133b83',6);cx.shadowColor='transparent';R(10,6,c.w-20,c.h-36,'#000',2)}
+else if(c.tvk){R(0,0,c.w,c.h-16,'#111',6);R(c.w/2-20,c.h-16,40,16,'#222',2);cx.shadowColor='transparent'}
+else if(p.t=='tag'){tagDraw(p);cx.restore();return}
+else if(c.c&&!c.pop)gen(p,c);else{R(0,0,c.w,c.h,'#111',12);cx.shadowColor='transparent'}
+if(c.tvk){const[x,y,w,h]=c.scr;if(p.tv){const g=cx.createLinearGradient(x,y,x+w,y+h);g.addColorStop(0,'#2b5fd9');g.addColorStop(1,'#9b4bd6');cx.fillStyle=g}else cx.fillStyle='#050505';cx.fillRect(x,y,w,h);if(p.tv){cx.fillStyle='#ffffff30';cx.beginPath();cx.arc(x+w/2+Math.sin(now/700)*w/3,y+h/2,h/4,0,7);cx.fill();cx.fillStyle='#ffffff14';cx.beginPath();cx.moveTo(x,y);cx.lineTo(x+w*.5,y);cx.lineTo(x,y+h*.7);cx.fill();cx.fillStyle='#fff';cx.font='bold 12px sans-serif';cx.fillText('VISTA',x+8,y+h-8)}}
+else if(p.pop)phone(p,c.scr);else if(c.scr)scr(p,...c.scr);
+if(isD(p)){const s=oledSt(p);if(s.st=='ok')scr(s.b,10,6,c.w-20,c.h-36);else if(s.st=='bad')garble(10,6,c.w-20,c.h-36)}
+cx.font='7px ui-monospace,monospace';wp({...p,x:0,y:0}).forEach(q=>{cx.fillStyle='#e8c14a';cx.beginPath();cx.arc(q.x,q.y,4.6,0,7);cx.fill();cx.fillStyle='#5a400a';cx.beginPath();cx.arc(q.x,q.y,1.8,0,7);cx.fill();if(V.z>.6){cx.fillStyle='#fff';cx.textAlign=q.s=='r'?'left':q.s=='l'?'right':'center';cx.fillText(q.n,q.x+(q.s=='r'?7:q.s=='l'?-7:0),q.y+(q.s=='u'?-14:3))}});cx.textAlign='left';
+if(p.fl){R(0,-10,c.w,6,'#0008',2);R(0,-10,c.w*p.fl.pr,6,'#35d39a',2);cx.fillStyle=T.ink;cx.font='9px sans-serif';cx.fillText(p.fl.pr<.25?'Erasing chip':p.fl.pr<.8?'Writing':'Verifying',0,-14)}
+if(p.fried)for(let i=0;i<3;i++){cx.fillStyle='rgba(120,120,120,'+(.5-((now/20+i*30)%90)/200)+')';cx.beginPath();cx.arc(30+i*12+Math.sin(now/200+i)*4,20-((now/20+i*30)%90),7,0,7);cx.fill()}
+if(isB(p)&&p.st=='run'){cx.strokeStyle='#35d39a';cx.globalAlpha=.45+.3*Math.sin(now/300);cx.lineWidth=2;cx.strokeRect(-2,-2,c.w+4,c.h+4);cx.globalAlpha=1}if(S.sel==p.id){cx.strokeStyle='#35d39a';cx.lineWidth=2;cx.setLineDash([5,4]);cx.strokeRect(-4,-4,c.w+8,c.h+8);cx.setLineDash([])}cx.restore()}
+const WC=['#e5484d','#3b82f6','#f5d90a','#35d39a','#f97316'];
+function wireP(a,b,c,w=3){const d=Math.min(90,40+Math.hypot(a.x-b.x,a.y-b.y)/4);cx.lineCap='round';for(const[col,lw,o]of[['#0007',w+3,3],[c,w+1,0],['#fff6',1.2,-1]]){cx.strokeStyle=col;cx.lineWidth=lw;cx.beginPath();cx.moveTo(a.x,a.y+o);cx.bezierCurveTo(a.x,a.y+d+o,b.x,b.y+d+o,b.x,b.y+o);cx.stroke()}}
+function draw(){const W=cv.clientWidth,H=cv.clientHeight;cx.setTransform(dpr,0,0,dpr,0,0);const bgr=cx.createRadialGradient(W/2,H/2,40,W/2,H/2,Math.max(W,H)*.75);bgr.addColorStop(0,T.bg2);bgr.addColorStop(1,T.bg);cx.fillStyle=bgr;cx.fillRect(0,0,W,H);cx.setTransform(dpr*V.z,0,0,dpr*V.z,dpr*V.x,dpr*V.y);
+const g=40,x0=Math.floor(-V.x/V.z/g)*g,y0=Math.floor(-V.y/V.z/g)*g;cx.fillStyle=T.grid;for(let x=x0;x<x0+W/V.z+g;x+=g)for(let y=y0;y<y0+H/V.z+g;y+=g)cx.fillRect(x,y,2/V.z+1,2/V.z+1);
+const sp=byId(S.sel);if(isB(sp)){cx.strokeStyle='#35d39a55';cx.setLineDash([6,6]);cx.beginPath();cx.arc(sp.x+CAT[sp.t].w/2,sp.y+CAT[sp.t].h/2,rng(sp),0,7);cx.stroke();cx.setLineDash([])}
+S.parts.forEach(part);S.wires.forEach(w=>{const a=pinXY(w.a),b=pinXY(w.b);if(a&&b)wireP(a,b,WC[w.c])});
+hlPts().forEach(q=>{cx.strokeStyle='#ffd34a';cx.lineWidth=3;cx.beginPath();cx.arc(q.x,q.y,11+Math.sin(now/150)*4,0,7);cx.stroke();cx.fillStyle='#ffd34a33';cx.fill()});if(wire){const h=pinAt(wire.x,wire.y);wireP(wire.f,h&&h.p!=wire.f.p?h:wire,'#fff8',3);if(h){cx.strokeStyle='#35d39a';cx.beginPath();cx.arc(h.x,h.y,9,0,7);cx.stroke()}}
+fx=fx.filter(f=>now-f.t<900);fx.forEach(f=>{const k=(now-f.t)/900;cx.strokeStyle=f.c+Math.floor((1-k)*200).toString(16).padStart(2,'0');cx.lineWidth=3;cx.beginPath();cx.arc(f.x,f.y,k*420,0,7);cx.stroke()})}
+/* ---------- simulation ---------- */
+function tick(t){now=t;for(const p of S.parts){if(!isB(p))continue;
+if(p.fl){p.fl.pr=Math.min(1,(now-p.fl.t0)/p.fl.ms);if(p.fl.pr>=1){p.fw=p.fl.fw;p.m=0;p.fl=null;ach('First flash');toast('Flashed '+FW[p.fw].n+' OK');beep(1000,.25,'triangle');if(p.on)pow(p,1);ui()}}
+if(p.st=='boot'&&now>p.bt)p.st='run';
+if(p.atk&&p.st=='run'){const c=CAT[p.t];if(now-(p.lp||0)>400){p.lp=now;fx.push({x:p.x+c.w/2,y:p.y+c.h/2,t:now,c:p.atk=='ir'?'#ffd34a':'#4aa8ff'})}
+if(p.atk=='ble'&&now-(p.lb||0)>280){p.lb=now;inRange(p,['bulb','plug','bell']).forEach(q=>q.fk=now);inRange(p,PT).forEach(q=>{q.pop.push(POP[q.t][Math.floor(Math.random()*3)]);if(q.pop.length>6)q.pop.shift()})}
+if(p.atk=='deauth')inRange(p,PT).forEach(q=>q.wifi=0);if(p.atk=='ir'&&now>p.irEnd)setAtk(p,null)}}
+const tt=lessonStep();$('#tut').style.display=!S.skip&&tt?'flex':'none';if(tt)$('#tt').textContent=tt;draw();requestAnimationFrame(tick)}
+function tutStep(){const e=S.parts.find(p=>p.t=='esp32'),o=S.parts.find(p=>p.t=='oled');if(!e)return'Open Parts and tap ESP32 DevKit V1.';if(!o)return'Now add an SSD1306 OLED.';
+if(oledSt(o).st!='ok')return'Hold a pin, drag to another, release. OLED GND to GND, VCC to 3V3, SDA to 21, SCL to 22.';if(!e.fw)return'Select the ESP32, open Firmware, flash Bruce.';if(!e.on)return'Press the power button at the top.';return null}
+/* ---------- panels ---------- */
+function ui(){const tabs=['Learn','Parts','Targets','Firmware','Apps','Inspector'];$('#tabs').innerHTML=tabs.map(t=>`<button class="${t==tab?'on':''}" onclick="tab='${t}';ui()">${t}</button>`).join('');const P=$('#pnl');
+const cards=g=>Object.entries(CAT).filter(([k,c])=>g.includes(c.g)).map(([k,c])=>`<button class="card" onclick="spawn('${k}')"><b>${c.n}</b><small>${c.d}</small></button>`).join('');
+if(tab=='Learn')P.innerHTML=learn();else if(tab=='Parts')P.innerHTML=grp(['Boards','Screens','Components','Sensors','RF','Power','Cables']);
+else if(tab=='Targets')P.innerHTML=grp(['Targets','Smart home','Props']);
+else if(tab=='Firmware')P.innerHTML=Object.entries(FW).map(([k,f])=>`<button class="card" onclick="flashFw('${k}')"><b>${f.n}</b><small>${f.d}. ${f.kb} KB. Fits: ${f.ok.map(o=>CAT[o].n).join(', ')}</small></button>`).join('')+'<p class="wide">Firmware is the program a board runs. Tap a board on the bench to select it, then tap a card here to write it onto the board.</p>';
+else if(tab=='Apps'){const ph=S.parts.filter(p=>p.pop);P.innerHTML=`<div class="card wide"><b>Tag Tinker</b><small>${ph.length?'Runs on the selected or first phone on the bench.':'Spawn a phone from Targets first.'}</small><div style="display:flex;gap:6px;margin-top:6px"><input id="code" placeholder="TAG-000000" style="flex:1"><button onclick="tagFind()">Find tag</button></div>
+<div style="display:flex;gap:6px;margin-top:6px"><input id="file" type="file" accept="image/*" disabled onchange="tagUp(this)"><button onclick="tagClr()">Remove image</button></div><small id="tmsg">${S.recent.length?'Recent: '+S.recent.join(', '):''}</small></div>`}
+else{const p=byId(S.sel);if(!p){P.innerHTML='<p class="wide">Tap a part on the bench to inspect it.</p>';return}const c=CAT[p.t];let h=`<div class="card wide"><b>${c.n}</b><small>${isB(p)?`${p.st}, firmware: ${p.fw?FW[p.fw].n:'none'}`:isD(p)?(p.fried?'Fried, repair it':{ok:'Wired correctly',bad:'Wired wrong: garbled picture',none:'Needs GND, VCC, SDA, SCL wired to an ESP32'}[oledSt(p).st]):p.code||''}</small></div>`;
+if(isB(p)){h+=`<button class="card" onclick="pow(byId(S.sel),!byId(S.sel).on);ui()">${p.on?'Power off':'Power on'}</button>`;if(p.st=='run'&&p.fw&&MENU[p.fw])h+=MENU[p.fw].map((m,i)=>`<button class="card ${p.m==i?'on':''}" onclick="menuPick(${i})">${m}${ACT[m]&&p.atk==ACT[m]?' (running)':''}</button>`).join('')}
+h+=extra(p);if(p.fried)h+=`<button class="card" onclick="byId(S.sel).fried=0;ui()">Repair</button>`;
+h+=`<button class="card" onclick="snap();S.wires=S.wires.filter(w=>w.a[0]!=S.sel&&w.b[0]!=S.sel);ui()">Remove wires</button><button class="card" onclick="dup()">Duplicate</button><button class="card" onclick="del()">Delete</button>`;P.innerHTML=h}}
+function dup(){const p=byId(S.sel);spawn(p.t);const n=byId(S.sel);n.x=p.x+30;n.y=p.y+30}
+function del(){snap();S.parts=S.parts.filter(p=>p.id!=S.sel);S.wires=S.wires.filter(w=>w.a[0]!=S.sel&&w.b[0]!=S.sel);sel(null)}
+function tagFind(){const v=$('#code').value.trim().toUpperCase(),t=S.parts.find(p=>p.code==v),ph=byId(S.sel)&&byId(S.sel).pop?byId(S.sel):S.parts.find(p=>p.pop);
+if(!ph)return toast('Spawn a phone first');ph.app='tt';ph.tc=v;ph.tm=t?'Tag found. Upload an image':'No tag with that code';$('#file').disabled=!t;$('#tmsg').textContent=t?'Match. Pick an image.':'No match. Check the code under the barcode.';
+if(t){S.tagSel=t.id;if(!S.recent.includes(v))S.recent.unshift(v);S.recent=S.recent.slice(0,5)}}
+function tagUp(i){const t=byId(S.tagSel),f=i.files[0];if(!t||!f)return;const r=new FileReader();r.onload=()=>{const im=new Image();im.onload=()=>{const k=Math.min(1,320/im.width),c=document.createElement('canvas');c.width=im.width*k;c.height=im.height*k;c.getContext('2d').drawImage(im,0,0,c.width,c.height);t.img=c.toDataURL('image/jpeg',.8);toast('Image placed on '+t.code);beep(760,.1)};im.src=r.result};r.readAsDataURL(f)}
+function tagClr(){const t=byId(S.tagSel);if(t){t.img=null;toast('Image removed')}}
+function menu(){const d=$('#dlg');d.innerHTML=`<h3>Menu</h3><p><button onclick="S.mute=!S.mute;menu()">Sound: ${S.mute?'off':'on'}</button> <button onclick="S.les=0;S.pg={};S.skip=0;tab='Learn';ui();$('#dlg').close()">Replay tutorial</button></p><h4>Licenses</h4><p style="font-size:12px;color:var(--mut)">All board, firmware and device names and likenesses are shown for recognizability, parody and education in a sandbox. Not affiliated with any trademark holder. All shapes are original drawings made in-canvas. Plain HTML, CSS and JS, no libraries. Every attack and device reaction is a cosmetic simulation. MIT License, (c) your name, year. Permission is granted to use, copy and modify this software, provided as is, without warranty.</p><button onclick="$('#dlg').close()">Close</button>`;d.showModal()}
+const rng=p=>420+S.parts.filter(a=>CAT[a.t].ant&&Math.hypot(a.x-p.x,a.y-p.y)<220).length*130;
+function wiredOn(p,k){const o=S.wires.filter(w=>w.a[0]==p.id||w.b[0]==p.id).map(w=>byId(w.a[0]==p.id?w.b[0]:w.a[0]));return o.length>=k&&o.every(b=>isB(b)&&b.st=='run'&&b.fw)}
+function rdText(p){const t=now/1000,r=CAT[p.t].rd;return r=='t'?(22+Math.sin(t/3)*1.5).toFixed(1)+' C '+(48+Math.sin(t/5)*3|0)+'%':r=='m'?(Math.sin(t)>.6?'MOTION':'idle'):r=='d'?(40+Math.sin(t/2)*20|0)+' cm':r=='l'?(500+Math.sin(t)*300|0)+' lux':r=='g'?'12.3N 45.6E':r=='a'?'ax '+Math.sin(t).toFixed(2)+' g':r=='n'?'no card':r=='v'?'-'+(30+Math.sin(t*3)*8|0)+' dB':r=='b'?(95-(now/9000|0)%40)+'%':''}
+function nav(b,f){const m=MENU[b.fw];if(!isB(b)||b.st!='run'||!m)return toast('Power the board on and flash a menu firmware');const n=m.length;if(f=='Up')b.m=(b.m+n-1)%n;else if(f=='Down')b.m=(b.m+1)%n;else if(f=='Select'||f=='Right')return menuPick(b.m,b);else setAtk(b,null);beep(500,.03);ui()}
+function press(p,k){p.pr=now;p.pk=k;beep(660,.04);const fn=p.fns[k]||'Select',ends=S.wires.filter(w=>w.a[0]==p.id||w.b[0]==p.id).map(w=>{const[a,b]=w.a[0]==p.id?[w.a,w.b]:[w.b,w.a],o=byId(b[0]);return{me:pinsOf(p)[a[1]].n,o,on:pinsOf(o)[b[1]].n}}),s=ends.find(e=>e.me=='S'+(k+1)&&isB(e.o)&&K(e.on)=='io'),g=ends.find(e=>e.me=='GND'&&isB(e.o)&&K(e.on)=='gnd');if(!s||!g||s.o!=g.o)return toast('Wire S'+(k+1)+' to a GPIO and GND to GND on the same board');ach('First button press');nav(s.o,fn)}
+function tapPart(p,w){const c=CAT[p.t];if(c.bt)press(p,Math.max(0,Math.min(c.bt-1,Math.floor((w.x-p.x-8)/((c.w-16)/c.bt)))));else if(c.k=='sw'){p.v=!p.v;beep(p.v?700:400,.04)}else if(c.k=='pot')p.v=((p.v||0)+10)%110;else if(c.k=='sold'){toast('Joined permanently! (Undo still works)');beep(300,.3,'sawtooth')}else if(c.k=='buz')beep(1200,.3)}
+function gen(p,c){R(0,0,c.w,c.h,c.c,6);cx.shadowColor='transparent';const on=S.parts.some(b=>isB(b)&&b.st=='run'),t=now/1000,k=c.k;
+if(c.bt){const cw=(c.w-16)/c.bt;for(let i=0;i<c.bt;i++){const d=p.pr&&p.pk==i&&now-p.pr<150;R(8+i*cw+2,8+(d?3:0),cw-4,c.h-36-(d?3:0),d?'#9a9':'#ececec',8);cx.fillStyle='#234';cx.font='7px sans-serif';cx.fillText((p.fns[i]||'').slice(0,4),12+i*cw,24)}}
+else if(k=='led'){const l=wiredOn(p,2);cx.fillStyle=l?'#ff4040':'#4a1a1a';cx.shadowColor=l?'#f44':'transparent';cx.shadowBlur=18;cx.beginPath();cx.arc(c.w/2,22,12,0,7);cx.fill();cx.shadowColor='transparent'}
+else if(k=='neo'){const o=wiredOn(p,3),n=c.mx?64:8;for(let i=0;i<n;i++){cx.fillStyle=o?'hsl('+((i*40+now/8)%360)+',90%,55%)':'#333';if(c.mx)cx.fillRect(6+(i%8)*(c.w-12)/8,6+(i>>3)*(c.h-24)/8,8,8);else cx.fillRect(6+i*(c.w-12)/8,8,(c.w-12)/8-2,c.h-34)}}
+else if(k=='sw'){R(10,10,c.w-20,16,'#222',8);R(p.v?c.w-30:12,8,18,20,'#ddd',6)}
+else if(k=='pot'){cx.save();cx.translate(c.w/2,26);cx.rotate((p.v||0)*.03-1.6);R(-4,-20,8,20,'#ddd',2);cx.restore();cx.fillStyle='#ddd';cx.beginPath();cx.arc(c.w/2,26,4,0,7);cx.fill()}
+else if(k=='motor'||k=='servo'){cx.save();cx.translate(c.w/2,24);cx.rotate(k=='motor'?(on?now/60:0):Math.sin(on?t*2:0)*1.2);R(-3,-18,6,18,'#eee',2);cx.restore()}
+cx.fillStyle='#fffc';cx.font='7px sans-serif';if(!c.pn)cx.fillText(c.n.slice(0,Math.floor(c.w/4)),4,c.h-6);if(c.rd){cx.fillStyle='#fe9';cx.fillText(rdText(p),4,c.h-16)}
+if(isB(p)){cx.fillStyle=p.st=='run'?'#3f6':'#244';cx.beginPath();cx.arc(c.w-10,10,4,0,7);cx.fill()}
+if(p.fk&&now-p.fk<600){cx.globalAlpha=.5;cx.fillStyle='#ffe066';cx.fillRect(0,0,c.w,c.h);cx.globalAlpha=1}}
+function extra(p){const c=CAT[p.t];let h=`<div class="card wide"><b>What is this?</b><small>${about(p)}</small></div>`;if(isB(p)&&p.st=='run'&&MENU[p.fw])h+=['Up','Down','Left','Right','Select','Back'].map(f=>`<button class="card" onclick="nav(byId(S.sel),'${f}')">${f}</button>`).join('');
+if(p.fns)h+=p.fns.map((f,k)=>`<label class="card">Button S${k+1} does<br><select onchange="byId(S.sel).fns[${k}]=this.value">${['Select','Up','Down','Left','Right','Back'].map(o=>`<option${o==f?' selected':''}>${o}</option>`).join('')}</select></label>`).join('')+'<p class="wide">Wire S to a GPIO and GND to GND on an ESP32 or other pin board, then tap the button on the bench.</p>';
+if(c.rd)h+=`<div class="card">Reading: ${rdText(p)}</div>`;return h}
+function grp(gs){return`<input class="wide" placeholder="Search parts" oninput="flt(this.value)">`+gs.map(g=>`<h4 class="wide" style="margin:8px 0 0;color:${GC[g]}">${IC[g]} ${g}</h4>`+Object.entries(CAT).filter(([k,c])=>c.g==g).map(([k,c])=>`<button class="card f" style="border-left-color:${GC[g]}" data-t="${(c.n+' '+c.d).toLowerCase()}" onclick="spawn('${k}')"><b>${c.n}</b><small>${c.d}</small></button>`).join('')).join('')}
+function flt(v){v=v.toLowerCase();document.querySelectorAll('.f').forEach(e=>e.style.display=e.dataset.t.includes(v)?'':'none')}
+addEventListener('keydown',e=>{const m={ArrowUp:'Up',ArrowDown:'Down',ArrowLeft:'Left',ArrowRight:'Right',Enter:'Select',Escape:'Back'}[e.key];if(!m||/INPUT|SELECT/.test(e.target.tagName))return;const b=isB(byId(S.sel))?byId(S.sel):S.parts.find(q=>isB(q)&&q.st=='run'&&MENU[q.fw]);if(b){e.preventDefault();nav(b,m)}});
+const has=t=>S.parts.some(p=>p.t==t),bd=t=>S.parts.find(p=>p.t==t),run=f=>S.parts.some(p=>isB(p)&&p.st=='run'&&p.fw==f),E=()=>bd('esp32')||{},CP=()=>bd('cardputer')||{};
+function wl(a,an,b,f){return!!(a&&b&&S.wires.some(w=>[[w.a,w.b],[w.b,w.a]].some(([x,y])=>x[0]==a.id&&y[0]==b.id&&pinsOf(a)[x[1]].n==an&&f(pinsOf(b)[y[1]].n))))}
+const pn=(p,n)=>{const q=p&&wp(p).find(q=>q.n==n);return q?[q]:[]},oe=(a,b)=>wl(bd('oled'),a,bd('esp32'),n=>n==b),h2=(a,b)=>()=>[...pn(bd('oled'),a),...pn(bd('esp32'),b)];
+const LS=[
+{t:'Wire a screen to an ESP32',d:'Pins, wires, firmware, power. The basics.',s:[
+['A board is a tiny computer. Open the Parts tab and tap ESP32 DevKit V1.',()=>has('esp32')],
+['Now a screen, so the board can show things. In Parts, scroll to Screens and tap SSD1306 OLED.',()=>has('oled')],
+['Wires carry signals. Press and HOLD the OLED pin GND, drag to a GND pin on the ESP32, then let go. GND is the return path for electricity.',()=>oe('GND','GND'),h2('GND','GND')],
+['Power: connect OLED VCC to ESP32 3V3 (3.3 volts). Not 5V, that would fry the screen.',()=>oe('VCC','3V3'),h2('VCC','3V3')],
+['Data: connect OLED SDA to ESP32 pin 21. SDA is the data line.',()=>oe('SDA','21'),h2('SDA','21')],
+['Connect OLED SCL to ESP32 pin 22. SCL is the clock that keeps both sides in step.',()=>oe('SCL','22'),h2('SCL','22')],
+['The board is empty until it has a program, called firmware. Tap the ESP32 to select it, open the Firmware tab, tap Bruce.',()=>E().fw],
+['Press the power button at the top. The OLED lights up with the Bruce menu.',()=>E().st=='run']]},
+{t:'Meet the Cardputer',d:'A handheld with its own screen. No wiring.',s:[
+['Some boards have a screen built in. Open Parts and tap M5 Cardputer.',()=>has('cardputer')],
+['Tap the Cardputer to select it, open Firmware, tap Bruce. Flashing writes the program onto the board.',()=>CP().fw=='bruce'],
+['Press the power button at the top. The board boots and shows the Bruce menu.',()=>CP().st=='run'],
+['Move the highlight: open Inspector and tap Down (or press arrow keys) until BLE Spam is highlighted.',()=>CP().m==1],
+['Tap Select (or Enter). Rings pulse out from the board. It is only a simulation.',()=>S.ach['First attack']],
+['Stop it with Back (or Escape).',()=>!CP().atk]]},
+{t:'BLE spam a phone',d:'Watch fake pairing popups flood a phone.',s:[
+['You need a Cardputer running Bruce. Finish lesson 2 first.',()=>run('bruce')],
+['Open Targets and tap iPhone-style. Drag it inside the dashed range ring around the board.',()=>has('iph')],
+['Select the board. In Inspector tap BLE Spam. Popups pile up on the phone.',()=>(bd('iph')||{pop:[]}).pop.length>0],
+['Tap BLE Spam again to stop. The popups clear.',()=>S.parts.every(b=>b.atk!='ble')]]},
+{t:'TV-B-Gone',d:'Switch a TV off with infrared codes.',s:[
+['You need a board running Bruce. Finish lesson 2 first.',()=>run('bruce')],
+['Open Targets and tap Flatscreen TV. Place it inside the board range ring.',()=>has('tv')],
+['Select the board and tap TV-B-Gone. It tries power codes and the TV turns off.',()=>bd('tv')&&!bd('tv').tv],
+['Run TV-B-Gone again. The same power code toggles the TV back on.',()=>bd('tv')&&bd('tv').tv]]},
+{t:'Buttons you program',d:'Wire a physical button and choose its job.',s:[
+['You need an ESP32 wired to an OLED. Finish lesson 1 first.',()=>bd('oled')&&oledSt(bd('oled')).st=='ok'],
+['Flash Bruce onto the ESP32 and power it on, so there is a menu to move around.',()=>E().fw=='bruce'&&E().st=='run'],
+['Open Parts, Components, tap Programmable button.',()=>has('btn')],
+['Wire the button pin S1 to a GPIO on the ESP32, such as 4. A GPIO is a pin the program can read.',()=>wl(bd('btn'),'S1',bd('esp32'),n=>K(n)=='io'),()=>[...pn(bd('btn'),'S1'),...pn(bd('esp32'),'4')]],
+['Wire the button GND to an ESP32 GND. Pressing joins S1 to ground, and the board notices.',()=>wl(bd('btn'),'GND',bd('esp32'),n=>n=='GND'),()=>[...pn(bd('btn'),'GND'),...pn(bd('esp32'),'GND')]],
+['Tap the button on the bench to press it. Select it first and pick Down or Select in Inspector to change what it does.',()=>S.ach['First button press']],
+['Try the 5-way button pad: wire all five S pins plus GND to the ESP32. Each button can do a different job.',()=>has('pad')&&S.wires.filter(w=>w.a[0]==bd('pad').id||w.b[0]==bd('pad').id).length>=6]]},
+{t:'Tag Tinker',d:'Put your own picture on a price tag.',s:[
+['Open Targets and tap Price tag. Its barcode code is printed under the bars.',()=>has('tag')],
+['Add an iPhone-style phone. Tag Tinker runs on it.',()=>has('iph')],
+['Open the Apps tab. Type the tag code exactly and tap Find tag.',()=>(bd('iph')||{}).tm&&bd('iph').tm.includes('found')],
+['Tap Choose file and pick any picture. It appears on the tag.',()=>(bd('tag')||{}).img]]},
+{t:'Oops, a fried part',d:'Wrong voltage. Safe to try, instantly fixable.',s:[
+['You need an ESP32 and an SSD1306 OLED on the bench.',()=>has('esp32')&&has('oled')],
+['Break it on purpose: wire ESP32 5V to OLED VCC. The screen only takes 3.3 volts.',()=>bd('oled').fried,()=>[...pn(bd('oled'),'VCC'),...pn(bd('esp32'),'5V')]],
+['Smoke! Nothing is really damaged here. Select the OLED, open Inspector, tap Repair.',()=>!bd('oled').fried]]},
+{t:'Flipper-style T-Embed',d:'A second firmware with different menus.',s:[
+['Open Parts and tap T-Embed CC1101.',()=>has('tembed')],
+['Select it, open Firmware, tap Furi-style. Only the T-Embed can take this firmware.',()=>(bd('tembed')||{}).fw=='furi'],
+['Press the power button at the top. In Inspector tap Infrared (TV-B-Gone).',()=>(bd('tembed')||{}).atk],
+['Add a TV nearby and run Infrared again. It switches the TV off.',()=>bd('tv')&&!bd('tv').tv]]}];
+function cur(){if(S.les==null)return null;const L=LS[S.les];let i=S.pg[S.les]||0;try{while(i<L.s.length&&L.s[i][1]())i++}catch(e){}S.pg[S.les]=i;return[L,i]}
+function lessonStep(){const c=cur();if(!c)return null;const[L,i]=c;if(i>=L.s.length){if(!S.done[S.les]){S.done[S.les]=1;ach('Lesson done: '+L.t);ui()}return'Lesson complete! Open the Learn tab for the next one.'}return(S.les+1)+'. '+L.t+' ('+(i+1)+'/'+L.s.length+')  '+L.s[i][0]}
+function hlPts(){const c=cur();if(!c||c[1]>=c[0].s.length)return[];const f=c[0].s[c[1]][2];try{return f?f():[]}catch(e){return[]}}
+const GL=[['Board','A tiny computer on a circuit board. Boards run one program at a time.'],['Firmware','The program a board runs. You flash it from the Firmware tab.'],['Flash','Write firmware onto a board. Erase, write, verify.'],['Pin and GPIO','The gold dots. A GPIO pin can be read or switched by the program.'],['GND','Ground, the return path for electricity. Almost every part needs one.'],['3V3 and 5V','Power pins. 3V3 gives 3.3 volts, 5V gives 5 volts. Too much voltage fries small parts.'],['SDA and SCL','Two wires for I2C. SDA carries data, SCL carries the clock. Used by small screens and sensors.'],['Bruce','A real-world firmware with menus for IR, Bluetooth, Wi-Fi and radio tools. Here it is a simulation.'],['BLE spam','Flooding nearby devices with fake Bluetooth pairing requests. Simulated here with popups.'],['TV-B-Gone','Sends TV power-off infrared codes one after another. Simulated here.'],['IR','Infrared light, like a TV remote uses.'],['Sub-GHz','Low-frequency radio used by garage doors and sensors. Menus only here.'],['Deauth demo','A Wi-Fi signal icon drops on a target. Educational, cosmetic only.']];
+const GC={Boards:'#35d39a',Screens:'#4aa8ff',Components:'#ffd34a',Sensors:'#ff8a5c',RF:'#b48cff',Power:'#7ee05a',Cables:'#9aa7a0',Targets:'#ff6b8a','Smart home':'#5ad7e0',Props:'#c9a26a'},IC={Boards:'🧠',Screens:'🖥️',Components:'🔘',Sensors:'📡',RF:'📶',Power:'🔋',Cables:'🔌',Targets:'🎯','Smart home':'🏠',Props:'🛒'};
+const GA={Boards:'A board is a tiny computer. Give it a program in the Firmware tab, then press the power button.',Screens:'A screen shows what a board draws. Wire GND, VCC to 3V3, SDA to pin 21 and SCL to pin 22 of an ESP32.',Components:'A building block. Wire it to a board and see what it does.',Sensors:'A sensor measures the world. Its readings here are simulated.',RF:'A radio part for sub-GHz, 2.4 GHz or LoRa. Cosmetic in this sandbox.',Power:'Batteries and chargers keep a board running away from a USB cable.',Cables:'Cables link boards to power or to a computer.',Targets:'Everyday gadgets to test your board on. They react to simulated signals.','Smart home':'Connected home gadgets. They flicker when a nearby board runs BLE spam.',Props:'Set dressing for building a store scene.'},AB={esp32:'The most common hobby board. It has Wi-Fi and Bluetooth but no screen, so wire an OLED to see anything. Pins are the gold dots.',cardputer:'A handheld ESP32 with a screen and keyboard built in. Flash Bruce and power on, no wiring needed.',tembed:'A board with a screen, a knob and a sub-GHz radio. Flash the Furi-style firmware for Flipper-like menus.',flip:'A Flipper Zero: a pocket tool with its own menus. It comes ready to use.',btn:'A physical button. Wire S1 to a GPIO and GND to GND, pick its job below, then tap it on the bench.',pad:'Five buttons in one. Wire each S pin to a GPIO and GND to GND. Give each a job below.',tag:'A shelf price tag with a unique barcode. Use the Apps tab (Tag Tinker) to put a picture on it.',tv:'A TV that listens for infrared codes. TV-B-Gone cycles power codes and switches it off.',iph:'A phone. BLE spam makes fake pairing popups appear. Tag Tinker runs here too.',sam:'A phone. BLE spam makes fake pairing popups appear.',cam:'A camera board with no USB port. Add an FTDI adapter from Parts to flash it.',ftdi:'A USB-to-serial adapter. Boards without USB need one to be flashed.',ant1:'An antenna. Place it near a board to extend its range ring.',led:'A tiny light. Wire + and - to a running board to light it.',oled:'A small screen. Wire GND, VCC to 3V3, SDA to 21, SCL to 22.'};
+function about(p){return AB[p.t]||GA[CAT[p.t].g]||''}
+function learn(){return`<div class="card wide"><b>Learn by doing</b><small>Pick a lesson. A yellow ring on the bench shows where to wire. Steps tick off by themselves, so just follow the banner at the top.</small></div>`+LS.map((L,i)=>`<button class="card ${S.les==i?'on':''}" onclick="S.les=${i};S.skip=0;ui()"><b>${S.done[i]?'✓ ':''}${i+1}. ${L.t}</b><small>${L.d}</small></button>`).join('')+`<div class="card wide"><b>Plain-English glossary</b>${GL.map(([a,b])=>`<details><summary>${a}</summary><small>${b}</small></details>`).join('')}</div>`}
+function size(){cv.width=cv.clientWidth*dpr;cv.height=cv.clientHeight*dpr}
+function theme(){const s=getComputedStyle(document.documentElement);T={bg2:s.getPropertyValue('--pan'),bg:s.getPropertyValue('--bg'),grid:s.getPropertyValue('--grid'),ink:s.getPropertyValue('--ink')}}
+addEventListener('resize',size);matchMedia('(prefers-color-scheme:light)').onchange=theme;
+function save(){try{localStorage.setItem('bench',JSON.stringify({parts:S.parts,wires:S.wires,nid:S.nid,ach:S.ach,skip:S.skip,done:S.done,les:S.les,recent:S.recent,mute:S.mute,V}))}catch(e){}}
+try{const o=JSON.parse(localStorage.getItem('bench')||'null');if(o){Object.assign(S,{parts:o.parts,wires:o.wires,nid:o.nid,ach:o.ach||{},skip:o.skip,done:o.done||{},les:o.les===undefined?0:o.les,recent:o.recent||[],mute:o.mute});V=o.V||V;S.parts.forEach(p=>{if(isB(p)){p.fl=null;p.atk=null;p.st=p.on?'run':'off'}if(p.pop)p.pop=[]})}}catch(e){}
+setInterval(save,30000);theme();size();ui();requestAnimationFrame(tick);
+</script></body></html>
